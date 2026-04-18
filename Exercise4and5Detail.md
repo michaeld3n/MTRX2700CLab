@@ -3,6 +3,162 @@
 
 ---
 
+## What is I2C?
+
+**I2C (Inter-Integrated Circuit)** is a two-wire serial communication protocol used to connect a microcontroller to peripheral chips — sensors, displays, EEPROMs, etc. It was designed by Philips in the 1980s and is still one of the most widely used embedded protocols.
+
+### The two wires
+
+| Wire | Name | Purpose |
+|---|---|---|
+| **SCL** | Serial Clock | The master drives this to set the communication speed |
+| **SDA** | Serial Data | Bidirectional data line — both master and slave use it |
+
+Both lines are **open-drain** with **pull-up resistors** to VCC (typically 4.7 kΩ). A device pulls the line LOW to assert it. Neither device ever drives the line HIGH — they just release it and the resistor pulls it up.
+
+On the STM32F3 Discovery board: **SCL = PB6**, **SDA = PB7**.
+
+---
+
+### How a transaction works
+
+Every I2C transaction follows this sequence:
+
+```
+START → ADDRESS + R/W bit → ACK → DATA byte(s) → ACK → ... → STOP
+```
+
+**Step by step:**
+
+1. **START condition** — master pulls SDA low while SCL is high. This signals all devices on the bus that a transaction is beginning.
+
+2. **7-bit address + R/W bit** — master clocks out 8 bits: the 7-bit address of the target device, then a direction bit (`0` = write, `1` = read). All devices on the bus hear this but only the one with the matching address responds.
+
+3. **ACK** — the addressed slave pulls SDA low for one clock pulse to say "I'm here, go ahead." If no device acknowledges, the master knows no device exists at that address.
+
+4. **Data bytes** — one byte at a time, clocked by SCL. After each byte the receiver sends an ACK bit. For a write, the master sends and the slave ACKs. For a read, the slave sends and the master ACKs (or sends NACK on the last byte to signal it is done).
+
+5. **STOP condition** — master releases SDA while SCL is high. Bus goes idle.
+
+**Write example (setting a register):**
+```
+START → [ADDR W] → ACK → [REG] → ACK → [VALUE] → ACK → STOP
+```
+
+**Read example (reading a register):**
+```
+START → [ADDR W] → ACK → [REG] → ACK → RESTART → [ADDR R] → ACK → [DATA] → NACK → STOP
+```
+
+---
+
+### I2C addresses
+
+Every I2C device has a fixed 7-bit address (set by the chip manufacturer, sometimes configurable via address pins). Multiple devices can share the same two wires as long as they have different addresses.
+
+The STM32 HAL uses **8-bit addresses** (the 7-bit address shifted 1 bit left). So when a datasheet says the address is `0x1E`, you pass `0x1E << 1 = 0x3C` to HAL functions.
+
+| Device on Discovery board | 7-bit address | HAL 8-bit address |
+|---|---|---|
+| LSM303DLHC Magnetometer | `0x1E` | `0x3C` |
+| LSM303DLHC Accelerometer | `0x19` | `0x32` |
+
+---
+
+### I2C in the STM32 HAL
+
+The HAL gives you two key functions:
+
+```c
+// Write bytes TO a device (e.g. set a register)
+HAL_StatusTypeDef HAL_I2C_Master_Transmit(
+    I2C_HandleTypeDef *hi2c,   // e.g. &hi2c1
+    uint16_t DevAddress,       // 8-bit address (7-bit << 1)
+    uint8_t *pData,            // pointer to bytes to send
+    uint16_t Size,             // number of bytes
+    uint32_t Timeout           // ms before giving up (use HAL_MAX_DELAY)
+);
+
+// Read bytes FROM a device (e.g. read a sensor register)
+HAL_StatusTypeDef HAL_I2C_Master_Receive(
+    I2C_HandleTypeDef *hi2c,
+    uint16_t DevAddress,
+    uint8_t *pData,            // buffer to read into
+    uint16_t Size,
+    uint32_t Timeout
+);
+```
+
+Both return `HAL_OK` (0) on success, `HAL_ERROR` or `HAL_TIMEOUT` on failure.
+
+**Writing one register:**
+```c
+uint8_t buf[2] = { reg_address, value };
+HAL_I2C_Master_Transmit(&hi2c1, 0x3C, buf, 2, HAL_MAX_DELAY);
+```
+
+**Reading multiple registers starting at a given address:**
+```c
+uint8_t reg = 0x03;
+uint8_t data[6];
+HAL_I2C_Master_Transmit(&hi2c1, 0x3C, &reg, 1, 100);  // tell sensor which register
+HAL_I2C_Master_Receive(&hi2c1,  0x3C, data, 6, 100);  // read 6 bytes back
+```
+
+---
+
+### Testing I2C independently
+
+Before writing any sensor driver, verify the I2C bus is alive with an **I2C scanner**. Paste this into `main()` after `MX_I2C1_Init()`:
+
+```c
+char s[40];
+for (uint8_t addr = 1; addr < 128; addr++) {
+    if (HAL_I2C_IsDeviceReady(&hi2c1, addr << 1, 2, 10) == HAL_OK) {
+        int len = sprintf(s, "I2C device found at 0x%02X\r\n", addr);
+        HAL_UART_Transmit(&huart1, (uint8_t *)s, len, 100);
+    }
+}
+HAL_UART_Transmit(&huart1, (uint8_t *)"Scan done\r\n", 11, 100);
+```
+
+Expected output on the PC serial terminal:
+```
+I2C device found at 0x19
+I2C device found at 0x1E
+Scan done
+```
+
+If you see nothing, the I2C peripheral is not initialised or the pull-up resistors are missing (the Discovery board has them built-in, so this usually means a CubeMX setup error).
+
+**Testing a single register write/read:**
+```c
+// Write 0x00 (continuous mode) to MR_REG_M (0x02) of the magnetometer
+uint8_t cmd[2] = { 0x02, 0x00 };
+HAL_StatusTypeDef w = HAL_I2C_Master_Transmit(&hi2c1, 0x3C, cmd, 2, 100);
+
+// Read it back
+uint8_t reg = 0x02, val = 0;
+HAL_I2C_Master_Transmit(&hi2c1, 0x3C, &reg, 1, 100);
+HAL_I2C_Master_Receive(&hi2c1,  0x3C, &val, 1, 100);
+
+char s[40];
+sprintf(s, "write=%d  MR_REG_M readback=0x%02X\r\n", w, val);
+HAL_UART_Transmit(&huart1, (uint8_t *)s, strlen(s), 100);
+// Expected: write=0  MR_REG_M readback=0x00
+```
+
+**Checking HAL return codes:**
+
+| Code | Meaning |
+|---|---|
+| `HAL_OK` (0) | Transaction succeeded |
+| `HAL_ERROR` (1) | Bus error or no ACK — wrong address or wiring issue |
+| `HAL_BUSY` (2) | I2C peripheral already in use |
+| `HAL_TIMEOUT` (3) | Device did not respond in time |
+
+---
+
 ## Exercise 4 — I2C Compass / Magnetometer
 
 ### Overview

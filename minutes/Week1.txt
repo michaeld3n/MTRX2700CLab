@@ -1,0 +1,40 @@
+MTRX2700 C Lab - Group 7
+Date: 2/04/2026
+Present:
+- Michael Deng
+- William Kirk
+- Hajin Paek
+- Josh Johnson
+
+Meeting Purpose:
+- Begin understanding the C Lab assignment
+- Assign roles within the team
+- Brainstorm strategies to undertake each given role (1 task for each member then all for task 5)
+- Decide how to organise our repository
+
+Previous Actions:
+- Review the lab handout and understand all 5 exercises
+- Create a GitHub repo for the C Lab
+- Set up group chat to communicate with all members
+- Familiarise ourselves with the STM32F3Discovery board and STM32CubeIDE
+
+Current Items:
+- Assign roles
+  Task 1 (Digital I/O):          Will
+  Task 2 (Timer / PWM):          Josh
+  Task 3 (Serial Interface):     Hajin
+  Task 4 (I2C Compass):          Michael
+  Task 5 (Integration):          All of us
+- Begin developing each individual section
+- Constructing a timeline for completion
+  - By Week 7: each individual section completed
+  - By Week 8 (start): integration complete
+  - Present/demo in Week 8 lab session
+
+New Items:
+- Individual tasks for the lab were handed out and understood
+- Repository structure agreed upon (one folder per exercise)
+- README and documentation templates created
+- Each member to begin their assigned task before next meeting
+
+Next Meeting Date: 16/04/2026 - week 7 ( second week ) class

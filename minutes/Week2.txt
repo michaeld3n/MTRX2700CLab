@@ -1,0 +1,37 @@
+MTRX2700 C Lab - Group 7
+Date: 16/04/2026
+Present:
+- Michael Deng
+- William Kirk
+- Hajin Paek
+- Josh Johnson
+
+Meeting Purpose:
+- Final review before demo day - one more review next monday
+- Confirm all tasks are complete and working
+- Ensure repository is clean and documentation is up to date
+- Run through demo plan so each member knows what to present
+
+Previous Actions:
+- Task 1 (Digital I/O) completed by Will
+- Task 2 (Timer / PWM) completed by Josh
+- Task 3 (Serial Interface) completed by Hajin
+- Task 4 (I2C Compass) completed by Michael
+- Integration task begun by all members
+
+Current Items:
+- Integration testing across both boards (Exercise 5)
+- Final README review and cleanup
+- Confirm all modules compile and run correctly
+- Tag the repository with release: "assessment demonstration"
+- Each member to be ready to explain their module to the tutor
+- Review discussion points from the lab handout for each exercise
+
+New Items:
+- Demo day confirmed for Week 8 lab session
+- All members to bring their board and have the repo open on GitHub
+- Ensure UART wiring between boards is tested before demo
+- Servo confirmed working with correct pulse widths (1ms, 1.5ms, 2ms)
+- LED heading display confirmed working for all 8 octants
+
+Next Meeting Date: DEMO DAY :) - 20/04/2026 (Monday) - meet before lab session to confirm demo
