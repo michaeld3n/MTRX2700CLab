@@ -1,1 +1,12 @@
-magtest.c
+Exercise4and5Detail.md
+task4.txt
+
+*/Debug/
+**/*.o
+**/*.d
+**/*.su
+**/*.cyclo
+**/*.elf
+**/*.map
+**/*.list
+.DS_Store

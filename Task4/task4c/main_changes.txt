@@ -1,0 +1,68 @@
+MAIN.C CHANGES - TASK 4 (c)
+Magnetometer + Accelerometer - tilt-compensated heading, pitch, roll
+=====================================================================
+
+
+--------------------------------------------------------------
+1. USER CODE BEGIN Includes
+--------------------------------------------------------------
+
+  /* USER CODE BEGIN Includes */
+  #include "compass.h"
+  #include <stdio.h>
+  #include <string.h>
+  /* USER CODE END Includes */
+
+
+--------------------------------------------------------------
+2. USER CODE BEGIN 2  (after all MX_ init calls)
+--------------------------------------------------------------
+
+  /* USER CODE BEGIN 2 */
+  compass_init();
+  /* USER CODE END 2 */
+
+
+--------------------------------------------------------------
+3. While loop
+--------------------------------------------------------------
+
+  /* USER CODE BEGIN WHILE */
+  char buf[80];
+  while (1)
+  {
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+    compass_read();
+    CompassData *d = compass_get_data();
+
+    int h_int  = (int)d->heading;
+    int h_frac = (int)((d->heading - h_int) * 10);
+    int p      = (int)d->pitch;
+    int r      = (int)d->roll;
+
+    sprintf(buf,
+        "Heading:%d.%d | Pitch:%d | Roll:%d | X:%d Y:%d Z:%d | T:%u ms\r\n",
+        h_int, h_frac, p, r,
+        d->raw_x, d->raw_y, d->raw_z,
+        (unsigned int)d->timestamp);
+
+    HAL_UART_Transmit(&huart1, (uint8_t*)buf, strlen(buf), HAL_MAX_DELAY);
+    HAL_Delay(300);
+  }
+  /* USER CODE END 3 */
+
+
+--------------------------------------------------------------
+NOTES
+--------------------------------------------------------------
+- Copy compass.h into Core/Inc in CubeIDE
+- Copy compass.c into Core/Src in CubeIDE
+- Add math library: Project Properties > C/C++ Build > Settings >
+  MCU GCC Linker > Libraries > click + > type: m > OK
+- Expected output:
+    Heading:217.4 | Pitch:-3 | Roll:5 | X:-163 Y:-132 Z:44 | T:800 ms
+- Heading is tilt-compensated: stays accurate even when board is tilted
+- Pitch: tilt the nose of the board up/down - value changes
+- Roll: tilt the left/right side up - value changes

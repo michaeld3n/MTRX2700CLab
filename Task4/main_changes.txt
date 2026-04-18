@@ -1,0 +1,75 @@
+MAIN.C CHANGES FOR EXERCISE 4
+==============================
+Copy these sections into the correct locations in Core/Src/main.c
+
+
+--------------------------------------------------------------
+1. USER CODE BEGIN Includes  (near the top of main.c)
+--------------------------------------------------------------
+
+  /* USER CODE BEGIN Includes */
+  #include "compass.h"
+  #include <stdio.h>
+  #include <string.h>
+  /* USER CODE END Includes */
+
+
+--------------------------------------------------------------
+2. USER CODE BEGIN 2  (after MX_ init calls, before while loop)
+--------------------------------------------------------------
+
+/* USER CODE BEGIN 2 */
+compass_init();
+/* USER CODE END 2 */
+
+
+--------------------------------------------------------------
+3. The while loop  (replace the entire while section)
+--------------------------------------------------------------
+
+  /* USER CODE BEGIN WHILE */
+  char buf[80];
+  while (1)
+  {
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+    compass_read();
+    CompassData *d = compass_get_data();
+
+    int h_int  = (int)d->heading;
+    int h_frac = (int)((d->heading - h_int) * 10);
+
+    sprintf(buf, "Heading: %d.%d deg | X:%d Y:%d Z:%d | T:%u ms\r\n",
+            h_int, h_frac,
+            d->raw_x, d->raw_y, d->raw_z,
+            (unsigned int)d->timestamp);
+
+    HAL_UART_Transmit(&huart1, (uint8_t*)buf, strlen(buf), HAL_MAX_DELAY);
+    HAL_Delay(300);
+  }
+  /* USER CODE END 3 */
+
+
+--------------------------------------------------------------
+IMPORTANT NOTES
+--------------------------------------------------------------
+
+- Only edit code inside /* USER CODE BEGIN */ and /* USER CODE END */ blocks.
+  CubeMX will delete anything outside those blocks if you regenerate code.
+
+- compass.c and compass.h must be added to the CubeIDE project:
+    Right-click Core/Src -> New -> File -> paste compass.c content
+    Right-click Core/Inc -> New -> File -> paste compass.h content
+
+- The math library must be linked (needed for atan2f in compass.c):
+    Right-click project -> Properties
+    C/C++ Build -> Settings -> Tool Settings
+    MCU GCC Linker -> Libraries
+    Click green + -> type: m -> OK -> Apply and Close
+
+- Expected serial output (115200 baud):
+    Heading: 145.3 deg | X:-312 Y:220 Z:-840 | T:800 ms
+    Heading: 147.1 deg | X:-318 Y:226 Z:-838 | T:1100 ms
+
+  Rotate the board and the Heading value changes.

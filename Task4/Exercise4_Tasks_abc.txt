@@ -1,0 +1,428 @@
+MTRX2700 - Exercise 4: Tasks a, b, c
+Text Answers + Working Code
+==============================================
+
+
+==============================================================
+TASK (a): Basic I2C interface to the compass module
+==============================================================
+
+WHAT WAS DONE:
+--------------
+The STM32F3 Discovery board has an LSM303AGR chip soldered onto it.
+This chip contains a magnetometer (compass) and accelerometer in one package.
+The magnetometer connects to the STM32 via I2C1 on pins PB6 (SCL) and PB7 (SDA).
+These pins are already physically wired on the board - no extra connections needed.
+
+To implement the I2C interface:
+
+Step 1 - CubeMX configuration:
+  In STM32CubeMX, I2C1 is enabled under Connectivity > I2C1, mode set to I2C.
+  CubeMX generates MX_I2C1_Init() in main.c which configures the peripheral
+  at 100kHz standard mode. This is called automatically before the while loop.
+
+Step 2 - Sensor initialisation:
+  On power-up the LSM303AGR magnetometer is in single-shot mode and outputs zeros.
+  To get continuous readings, register CFG_REG_A_M (address 0x60) must be written
+  with the value 0x00. This enables continuous measurement mode at 10Hz.
+
+Step 3 - Reading data:
+  Six bytes are read starting from register OUTX_L_REG_M (address 0x68).
+  These six bytes contain X, Y, and Z magnetic field values as 16-bit integers.
+  The byte order is little-endian: low byte first, then high byte.
+  HAL_I2C_Mem_Read is used for reading - this handles the I2C "repeated start"
+  correctly, which HAL_I2C_Master_Transmit followed by Receive does not.
+
+HOW WE KNOW IT WORKS:
+  Running an I2C scanner showed the device responding at address 0x1E.
+  After enabling continuous mode, the output registers return non-zero values
+  that change when the board is rotated.
+
+NOTE ON CHIP REVISION:
+  The lab spec refers to the LSM303DLHC. Newer Discovery boards use the LSM303AGR.
+  Reading register 0x4F (WHO_AM_I) returns 0x40, confirming LSM303AGR.
+  The AGR has different register addresses from the DLHC - the code below uses
+  the correct AGR addresses.
+
+--------------------------------------------------------------
+CODE FOR TASK (a): compass.h and compass.c (basic version)
+--------------------------------------------------------------
+
+---- compass.h ----
+
+#ifndef COMPASS_H
+#define COMPASS_H
+
+#include <stdint.h>
+
+typedef struct {
+    int16_t  raw_x;
+    int16_t  raw_y;
+    int16_t  raw_z;
+    float    heading;
+    uint32_t timestamp;
+} CompassData;
+
+void compass_init(void);
+void compass_read(void);
+CompassData* compass_get_data(void);
+
+#endif
+
+
+---- compass.c ----
+
+#include "main.h"
+#include "compass.h"
+#include <math.h>
+
+/* LSM303AGR magnetometer - 7-bit address 0x1E, HAL uses 8-bit so 0x3C */
+#define MAG_ADDR         0x3C
+
+/* Register addresses for LSM303AGR magnetometer */
+#define MAG_CFG_REG_A    0x60   /* Configuration: set continuous mode here */
+#define MAG_OUT_X_L      0x68   /* First output byte (X low), reads 6 bytes total */
+
+extern I2C_HandleTypeDef hi2c1;
+
+static CompassData compass_data = {0};
+
+void compass_init(void) {
+    HAL_Delay(20);
+    /* Write 0x00 to CFG_REG_A_M: continuous mode, 10Hz output data rate */
+    uint8_t val = 0x00;
+    HAL_I2C_Mem_Write(&hi2c1, MAG_ADDR, MAG_CFG_REG_A, I2C_MEMADD_SIZE_8BIT,
+                      &val, 1, 100);
+    HAL_Delay(20);
+}
+
+void compass_read(void) {
+    uint8_t raw[6] = {0};
+
+    /* Read 6 bytes from OUTX_L_REG_M
+       Byte order: X_L, X_H, Y_L, Y_H, Z_L, Z_H (little-endian) */
+    if (HAL_I2C_Mem_Read(&hi2c1, MAG_ADDR, MAG_OUT_X_L, I2C_MEMADD_SIZE_8BIT,
+                         raw, 6, 100) != HAL_OK) {
+        return;
+    }
+
+    compass_data.raw_x = (int16_t)(raw[0] | (raw[1] << 8));
+    compass_data.raw_y = (int16_t)(raw[2] | (raw[3] << 8));
+    compass_data.raw_z = (int16_t)(raw[4] | (raw[5] << 8));
+
+    /* Calculate heading from X and Y (assumes board is flat) */
+    float angle = atan2f((float)compass_data.raw_y, (float)compass_data.raw_x)
+                  * (180.0f / 3.14159265f);
+    if (angle < 0.0f) angle += 360.0f;
+
+    compass_data.heading   = angle;
+    compass_data.timestamp = HAL_GetTick();
+}
+
+CompassData* compass_get_data(void) {
+    return &compass_data;
+}
+
+
+---- main.c additions ----
+
+In USER CODE BEGIN Includes:
+    #include "compass.h"
+    #include <stdio.h>
+    #include <string.h>
+
+In USER CODE BEGIN 2:
+    compass_init();
+
+In USER CODE BEGIN WHILE / USER CODE BEGIN 3:
+
+    char buf[80];
+    while (1)
+    {
+      /* USER CODE END WHILE */
+      /* USER CODE BEGIN 3 */
+      compass_read();
+      CompassData *d = compass_get_data();
+
+      int h_int  = (int)d->heading;
+      int h_frac = (int)((d->heading - h_int) * 10);
+
+      sprintf(buf, "Heading: %d.%d deg | X:%d Y:%d Z:%d | T:%u ms\r\n",
+              h_int, h_frac,
+              d->raw_x, d->raw_y, d->raw_z,
+              (unsigned int)d->timestamp);
+
+      HAL_UART_Transmit(&huart1, (uint8_t*)buf, strlen(buf), HAL_MAX_DELAY);
+      HAL_Delay(300);
+    }
+
+
+==============================================================
+TASK (b): CompassData structure
+==============================================================
+
+WHAT WAS DONE:
+--------------
+A structure called CompassData is defined in compass.h so that any other
+module in the project can include compass.h and use the data type.
+
+The structure contains five fields:
+
+  raw_x, raw_y, raw_z (int16_t):
+    These store the direct integer values read from the sensor output registers.
+    Each axis is a 16-bit signed integer. The sensor produces values typically
+    in the range -2000 to +2000 in milligauss units.
+    Two bytes from the sensor are combined into one int16_t like this:
+      raw_x = (int16_t)(low_byte | (high_byte << 8))
+
+  heading (float):
+    Decoded compass bearing in degrees from 0.0 to 360.0.
+    Calculated using atan2f(raw_y, raw_x) which converts the 2D magnetic
+    vector into an angle. The result in radians is multiplied by 180/pi.
+    If negative, 360 is added to bring it into the 0-360 range.
+    This is only accurate when the board is held flat (horizontal).
+
+  timestamp (uint32_t):
+    The value of HAL_GetTick() at the moment the reading was taken.
+    HAL_GetTick() returns milliseconds since the MCU started.
+    Storing this with the data lets other modules (e.g. a UART transmitter
+    in Exercise 5) know exactly when the measurement was made.
+    It also allows detecting a stale or frozen sensor - if the timestamp
+    stops changing, the sensor has stopped responding.
+
+ENCAPSULATION DESIGN:
+  The CompassData variable is declared static inside compass.c:
+    static CompassData compass_data = {0};
+  The keyword static means nothing outside compass.c can access it directly.
+  Other modules call compass_get_data() which returns a pointer to the struct.
+  This gives read access without allowing external code to corrupt the data.
+
+HOW IT IS SHARED:
+  Any other .c file that needs the compass data does this:
+    #include "compass.h"
+    CompassData *d = compass_get_data();
+    // now use d->heading, d->raw_x, d->timestamp etc.
+  No need to re-read the sensor. The data is updated each time compass_read()
+  is called in the main loop.
+
+The compass.h and compass.c code is the same as shown in Task (a) above.
+The structure and its usage is already built into that implementation.
+
+
+==============================================================
+TASK (c): Advanced - Accelerometer + Tilt-Compensated Heading
+==============================================================
+
+WHAT THIS ADDS:
+---------------
+Task (a) calculates heading assuming the board is perfectly flat.
+If the board is tilted, the raw X and Y magnetic values are affected by the
+Z-axis component, giving a wrong heading angle.
+
+The LSM303AGR chip also contains an accelerometer at I2C address 0x19 (HAL: 0x32).
+The accelerometer measures gravity, which always points straight down.
+From the gravity vector we can calculate how much the board is tilted:
+  pitch = how much the nose is up or down (rotation around Y axis)
+  roll  = how much the left/right side is up (rotation around X axis)
+
+Once we know pitch and roll, we can rotate the magnetic field vector to remove
+the tilt effect. This gives an accurate heading even when the board is not flat.
+This technique is called tilt-compensated heading.
+
+The gyroscope (L3GD20H, connected via SPI) measures rotation rate in degrees
+per second. It is on SPI1 with chip-select on PE3. Combining gyro rate data
+with accelerometer and magnetometer data using a filter gives smoother and
+faster attitude estimates. This combination is called an AHRS
+(Attitude and Heading Reference System).
+
+For this implementation we add the accelerometer for tilt compensation.
+The gyroscope integration is described at the end as an extension.
+
+--------------------------------------------------------------
+CODE FOR TASK (c): Extended compass module with accelerometer
+--------------------------------------------------------------
+
+---- compass.h (updated) ----
+
+#ifndef COMPASS_H
+#define COMPASS_H
+
+#include <stdint.h>
+
+typedef struct {
+    /* Raw magnetometer values */
+    int16_t  raw_x;
+    int16_t  raw_y;
+    int16_t  raw_z;
+    /* Raw accelerometer values */
+    int16_t  acc_x;
+    int16_t  acc_y;
+    int16_t  acc_z;
+    /* Decoded angles */
+    float    heading;   /* 0 to 360 degrees, tilt-compensated */
+    float    pitch;     /* degrees, positive = nose up */
+    float    roll;      /* degrees, positive = right side up */
+    uint32_t timestamp;
+} CompassData;
+
+void compass_init(void);
+void compass_read(void);
+CompassData* compass_get_data(void);
+
+#endif
+
+
+---- compass.c (updated with accelerometer + tilt compensation) ----
+
+#include "main.h"
+#include "compass.h"
+#include <math.h>
+
+/* LSM303AGR magnetometer: 7-bit 0x1E -> HAL 8-bit 0x3C */
+#define MAG_ADDR         0x3C
+#define MAG_CFG_REG_A    0x60
+#define MAG_OUT_X_L      0x68
+
+/* LSM303AGR accelerometer: 7-bit 0x19 -> HAL 8-bit 0x32 */
+#define ACC_ADDR         0x32
+#define ACC_CTRL_REG1    0x20   /* Enable all axes, set output rate */
+#define ACC_OUT_X_L      0x28   /* First output byte, read 6 bytes total */
+
+extern I2C_HandleTypeDef hi2c1;
+
+static CompassData compass_data = {0};
+
+void compass_init(void) {
+    HAL_Delay(20);
+
+    /* Magnetometer: continuous mode, 10Hz */
+    uint8_t val = 0x00;
+    HAL_I2C_Mem_Write(&hi2c1, MAG_ADDR, MAG_CFG_REG_A,
+                      I2C_MEMADD_SIZE_8BIT, &val, 1, 100);
+
+    /* Accelerometer: 100Hz, normal mode, all axes enabled
+       0x57 = 0101 0111: ODR=100Hz, low-power off, Z/Y/X enabled */
+    val = 0x57;
+    HAL_I2C_Mem_Write(&hi2c1, ACC_ADDR, ACC_CTRL_REG1,
+                      I2C_MEMADD_SIZE_8BIT, &val, 1, 100);
+
+    HAL_Delay(20);
+}
+
+void compass_read(void) {
+    uint8_t raw[6] = {0};
+
+    /* Read magnetometer (6 bytes, little-endian X Y Z) */
+    if (HAL_I2C_Mem_Read(&hi2c1, MAG_ADDR, MAG_OUT_X_L,
+                         I2C_MEMADD_SIZE_8BIT, raw, 6, 100) != HAL_OK) return;
+
+    compass_data.raw_x = (int16_t)(raw[0] | (raw[1] << 8));
+    compass_data.raw_y = (int16_t)(raw[2] | (raw[3] << 8));
+    compass_data.raw_z = (int16_t)(raw[4] | (raw[5] << 8));
+
+    /* Read accelerometer (6 bytes, little-endian X Y Z) */
+    if (HAL_I2C_Mem_Read(&hi2c1, ACC_ADDR, ACC_OUT_X_L | 0x80,
+                         I2C_MEMADD_SIZE_8BIT, raw, 6, 100) != HAL_OK) return;
+
+    /* Accelerometer data is left-justified 12-bit in 16-bit registers - shift right 4 */
+    compass_data.acc_x = (int16_t)(raw[0] | (raw[1] << 8)) >> 4;
+    compass_data.acc_y = (int16_t)(raw[2] | (raw[3] << 8)) >> 4;
+    compass_data.acc_z = (int16_t)(raw[4] | (raw[5] << 8)) >> 4;
+
+    /* Convert accelerometer to float for angle calculation */
+    float ax = (float)compass_data.acc_x;
+    float ay = (float)compass_data.acc_y;
+    float az = (float)compass_data.acc_z;
+
+    /* Calculate pitch and roll from gravity vector (radians) */
+    float pitch_rad = atan2f(-ax, sqrtf(ay*ay + az*az));
+    float roll_rad  = atan2f(ay, az);
+
+    /* Store in degrees */
+    compass_data.pitch = pitch_rad * (180.0f / 3.14159265f);
+    compass_data.roll  = roll_rad  * (180.0f / 3.14159265f);
+
+    /* Tilt-compensated heading calculation
+       Rotate the magnetic field vector by pitch and roll to get
+       the horizontal component even when the board is tilted */
+    float mx = (float)compass_data.raw_x;
+    float my = (float)compass_data.raw_y;
+    float mz = (float)compass_data.raw_z;
+
+    float cos_pitch = cosf(pitch_rad);
+    float sin_pitch = sinf(pitch_rad);
+    float cos_roll  = cosf(roll_rad);
+    float sin_roll  = sinf(roll_rad);
+
+    /* Project magnetic field onto horizontal plane */
+    float Xh = mx * cos_pitch + mz * sin_pitch;
+    float Yh = mx * sin_roll * sin_pitch + my * cos_roll - mz * sin_roll * cos_pitch;
+
+    float angle = atan2f(-Yh, Xh) * (180.0f / 3.14159265f);
+    if (angle < 0.0f) angle += 360.0f;
+
+    compass_data.heading   = angle;
+    compass_data.timestamp = HAL_GetTick();
+}
+
+CompassData* compass_get_data(void) {
+    return &compass_data;
+}
+
+
+---- main.c while loop (updated to print pitch and roll too) ----
+
+    /* USER CODE BEGIN 3 */
+    compass_read();
+    CompassData *d = compass_get_data();
+
+    int h_int  = (int)d->heading;
+    int h_frac = (int)((d->heading - h_int) * 10);
+    int p_int  = (int)d->pitch;
+    int r_int  = (int)d->roll;
+
+    sprintf(buf,
+        "Heading:%d.%d | Pitch:%d | Roll:%d | X:%d Y:%d Z:%d | T:%u ms\r\n",
+        h_int, h_frac, p_int, r_int,
+        d->raw_x, d->raw_y, d->raw_z,
+        (unsigned int)d->timestamp);
+
+    HAL_UART_Transmit(&huart1, (uint8_t*)buf, strlen(buf), HAL_MAX_DELAY);
+    HAL_Delay(300);
+
+
+NOTE ON THE ACCELEROMETER REGISTER READ (ACC_OUT_X_L | 0x80):
+  The 0x80 is needed for multi-byte reads on the LSM303AGR accelerometer.
+  Setting bit 7 of the register address enables auto-increment mode on the
+  accelerometer, so the sensor automatically steps through all 6 output
+  registers in one read. Without it, only the first byte would be read 6 times.
+  The magnetometer does not need this because auto-increment is always on.
+
+
+==============================================================
+EXTENSION: Adding the Gyroscope (L3GD20H via SPI)
+==============================================================
+
+The L3GD20H gyroscope uses SPI (Serial Peripheral Interface) not I2C.
+SPI uses four wires: SCK (clock), MISO (data in), MOSI (data out), CS (select).
+On the Discovery board: SCK=PA5, MISO=PA6, MOSI=PA7, CS=PE3.
+
+In CubeMX:
+  Enable SPI1 in Full-Duplex Master mode.
+  Set PE3 as GPIO Output (chip select, controlled manually).
+
+Gyroscope register key values:
+  CTRL_REG1 (0x20): write 0x0F to enable all axes and power up
+  OUT_X_L   (0x28): read 6 bytes for X, Y, Z angular rate (little-endian)
+
+Gyroscope data gives angular rate in degrees per second (dps).
+To get angle, integrate rate over time:
+  angle += gyro_rate * delta_time_seconds
+
+Combining gyro (fast, noisy drift) with accelerometer/magnetometer (slow, stable)
+using a complementary filter gives accurate smooth attitude:
+  filtered_angle = 0.98 * (filtered_angle + gyro_rate * dt)
+                 + 0.02 * accel_angle
+
+This gives an AHRS system that tracks heading, pitch, and roll in real time
+with good noise rejection and no long-term drift.

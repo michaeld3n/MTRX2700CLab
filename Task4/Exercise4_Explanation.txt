@@ -1,0 +1,291 @@
+MTRX2700 - Exercise 4: I2C Sensor Interfacing
+Explanation for Tutor Presentation
+==============================================
+
+
+WHAT THE EXERCISE IS ABOUT
+---------------------------
+The goal is to read data from the magnetometer (compass chip) that is physically
+built into the STM32F3 Discovery board, and then store that data in a structured
+way so other parts of the code can use it.
+
+This requires understanding three things:
+  1. What I2C is and how it works
+  2. How to talk to the specific chip on the board (LSM303AGR)
+  3. How to design a module that other code can use cleanly
+
+
+==============================================================
+PART 1: WHAT IS I2C?
+==============================================================
+
+I2C (Inter-Integrated Circuit) is a communication protocol that lets a
+microcontroller talk to sensors and other chips using just TWO wires:
+
+  SDA  - Serial Data line  (data goes back and forth on this wire)
+  SCL  - Serial Clock line (the STM32 pulses this to control timing)
+
+On the STM32F3 Discovery board:
+  SDA is on pin PB7
+  SCL is on pin PB6
+These are already physically wired to the compass chip on the board.
+No extra wiring is needed.
+
+HOW A TRANSACTION WORKS:
+Every I2C transaction follows this sequence:
+
+  Step 1 - START condition
+    The STM32 pulls SDA low while SCL is high.
+    This signals to all devices on the bus: "I am about to send something."
+
+  Step 2 - Address + direction bit
+    The STM32 sends a 7-bit address followed by a Read/Write bit.
+    Every device on the I2C bus has a unique address.
+    The compass chip (LSM303AGR mag) has address 0x1E.
+    HAL uses 8-bit addresses (7-bit shifted left by 1), so we pass 0x3C.
+    If the address matches, that device responds. Others stay silent.
+
+  Step 3 - Register address
+    The STM32 sends which register it wants to read or write.
+    Registers are like memory slots inside the chip.
+    For example, register 0x68 holds the first magnetometer output byte.
+
+  Step 4 - Data transfer
+    For a write: STM32 sends the byte value to put in that register.
+    For a read:  STM32 releases the data line and the sensor sends back bytes.
+
+  Step 5 - STOP condition
+    SDA goes high while SCL is high. Transaction is complete.
+
+HAL FUNCTIONS USED:
+  HAL_I2C_Mem_Write - write a value into a register on the sensor
+  HAL_I2C_Mem_Read  - read one or more bytes from a register on the sensor
+  HAL_I2C_IsDeviceReady - check if a chip responds at a given address (scanner)
+
+
+==============================================================
+PART 2: THE CHIP ON THE BOARD - LSM303AGR
+==============================================================
+
+The STM32F3 Discovery board has an ST LSM303AGR chip soldered onto it.
+This chip contains two sensors in one package:
+  - A magnetometer  (measures magnetic field - used for compass heading)
+  - An accelerometer (measures acceleration - useful for tilt correction)
+
+We only use the magnetometer for Exercise 4.
+
+The magnetometer I2C address is 0x1E (7-bit), or 0x3C in HAL 8-bit format.
+
+IMPORTANT NOTE - chip revision:
+  The lab spec mentions the LSM303DLHC, which is an older version of this chip.
+  Newer Discovery boards (like the one we have) use the LSM303AGR instead.
+  The two chips have different register addresses, so the DLHC code does NOT
+  work on our board. We verified this using a WHO_AM_I register read:
+    Register 0x4F returned 0x40, which is the LSM303AGR identity code.
+
+KEY REGISTERS ON THE LSM303AGR MAGNETOMETER:
+
+  0x60  CFG_REG_A_M  - Configuration register
+                       Writing 0x00 puts the sensor into continuous measurement
+                       mode at 10Hz. This means it constantly updates its output.
+                       Default on power-up is single-shot mode (outputs zeros).
+
+  0x68  OUTX_L_REG_M - First output register
+                       Reading 6 bytes from here gives all three axes:
+                         Byte 0: X low byte
+                         Byte 1: X high byte
+                         Byte 2: Y low byte
+                         Byte 3: Y high byte
+                         Byte 4: Z low byte
+                         Byte 5: Z high byte
+
+INITIALISATION:
+  Before reading data, we must write 0x00 to register 0x60.
+  This switches the chip from idle/single-shot to continuous measurement mode.
+  Without this step, all output registers return zero.
+
+
+==============================================================
+PART 3: THE CompassData STRUCTURE
+==============================================================
+
+The task requires creating a structure to store the sensor data so it can
+be shared with other modules (for example, Exercise 5 passes it over UART
+to a second board).
+
+The structure is defined in compass.h:
+
+  typedef struct {
+      int16_t  raw_x;       // Raw magnetic field on X axis
+      int16_t  raw_y;       // Raw magnetic field on Y axis
+      int16_t  raw_z;       // Raw magnetic field on Z axis
+      float    heading;     // Decoded compass heading in degrees (0 to 360)
+      uint32_t timestamp;   // Time the reading was taken (milliseconds since boot)
+  } CompassData;
+
+WHY EACH FIELD:
+
+  raw_x, raw_y, raw_z:
+    These are the direct 16-bit signed integers from the sensor output registers.
+    Two bytes are combined into one int16_t: (high_byte << 8) | low_byte
+    The unit is milligauss. Typical values are in the range -1000 to +1000.
+
+  heading:
+    Calculated from raw_x and raw_y using atan2f.
+    atan2f(y, x) gives the angle of the vector (x, y) from the positive X axis.
+    The result is in radians, multiplied by (180/pi) to convert to degrees.
+    If the result is negative, add 360 to keep it in the 0-360 range.
+    This only works correctly when the board is held flat (no tilt correction).
+
+  timestamp:
+    HAL_GetTick() returns milliseconds since the MCU started.
+    Storing this with each reading lets other modules know how fresh the data is.
+    Example: if timestamp is 5000, the reading was taken 5 seconds after boot.
+
+WHY atan2f AND NOT atan:
+  atan(y/x) only gives angles in the range -90 to +90 degrees.
+  It cannot tell the difference between quadrant 1 and quadrant 3.
+  atan2f(y, x) takes both values separately and correctly handles all 4 quadrants.
+  Result range is -180 to +180, so we add 360 when negative to get 0-360.
+
+
+==============================================================
+PART 4: MODULE DESIGN - compass.c and compass.h
+==============================================================
+
+The implementation is split into a header file and a source file.
+
+compass.h:
+  - Defines the CompassData struct (so any file can use it)
+  - Declares three public functions:
+      compass_init()      - configure the sensor, called once at startup
+      compass_read()      - read new data from sensor, update internal struct
+      compass_get_data()  - return a pointer to the stored data
+
+compass.c:
+  - Contains the static CompassData variable (private - not directly accessible)
+  - Implements all three public functions
+  - Has two private helper functions (mag_write and mag_read)
+
+WHY THE DATA IS STATIC AND PRIVATE:
+  compass_data is declared as:
+    static CompassData compass_data = {0};
+
+  The keyword static here means the variable cannot be accessed from outside
+  compass.c. No other file can read or modify it directly.
+  The only way to get the data is to call compass_get_data().
+  This is the principle of encapsulation - the module controls its own data.
+
+WHY USE compass_get_data() INSTEAD OF A GLOBAL:
+  If compass_data were a global, any part of the code could overwrite it
+  by accident. By returning a pointer through a function, we make the interface
+  explicit. The caller gets read access without being able to break the module.
+
+
+==============================================================
+PART 5: HOW THE CODE FLOWS IN main.c
+==============================================================
+
+At startup (before the while loop):
+  1. HAL_Init() - sets up the HAL library and SysTick timer
+  2. SystemClock_Config() - configures the CPU clock to 72MHz
+  3. MX_I2C1_Init() - configures I2C1 peripheral on PB6/PB7
+  4. MX_USART1_UART_Init() - configures USART1 for serial debug output
+  5. compass_init() - writes to the sensor config register to start measurements
+
+In the while(1) loop (runs forever):
+  1. compass_read() - reads 6 bytes from sensor, calculates heading and timestamp
+  2. compass_get_data() - returns pointer to the stored CompassData struct
+  3. sprintf() - formats the data as a printable string
+  4. HAL_UART_Transmit() - sends the string over USART1 to the PC terminal
+  5. HAL_Delay(300) - waits 300ms before reading again
+
+
+==============================================================
+PART 6: HOW TO VERIFY IT IS WORKING
+==============================================================
+
+Test 1 - Data prints
+  Run the serial terminal (screen /dev/tty.usbmodem<number> 115200)
+  You should see lines every 300ms with X, Y, Z and Heading values.
+
+Test 2 - Values change with rotation
+  Rotate the board left and right while flat on the desk.
+  The X and Y raw values should change, and the heading should change.
+
+Test 3 - Heading direction
+  Point one edge of the board toward magnetic north.
+  The heading should read close to 0 or 360 degrees.
+  Rotate 90 degrees clockwise - heading should be near 90.
+  Rotate 180 degrees from north - heading should be near 180.
+
+Test 4 - Timestamp increases
+  Each line should show a timestamp that increases by about 300ms.
+  This confirms HAL_GetTick() is working correctly.
+
+Test 5 - Struct sharing
+  compass_get_data() returns a pointer.
+  A second module (such as an Exercise 5 UART transmit module) can call
+  compass_get_data() and read the same values without re-reading the sensor.
+
+
+==============================================================
+PART 7: DEBUGGING PROCESS (what went wrong and how we fixed it)
+==============================================================
+
+Problem 1 - All zeros in output
+  Symptom: TX:0 RX:0 but raw values all zero.
+  Cause: Sensor was in single-shot mode (default on power-up).
+  Fix: Write 0x00 to CFG_REG_A_M (register 0x60) to enable continuous mode.
+
+Problem 2 - Still zeros after init
+  Symptom: HAL_I2C_Master_Transmit/Receive returned OK but data was zero.
+  Cause: Manual Transmit then Receive does not work reliably on STM32F3 I2C.
+         The I2C peripheral requires a "repeated start" between write and read.
+         Using separate Transmit + Receive sends a STOP between them, which
+         resets the sensor's register pointer back to zero.
+  Fix: Switch to HAL_I2C_Mem_Read which handles the repeated start internally.
+
+Problem 3 - Wrong chip
+  Symptom: WHO_AM_I register 0x0A returned 0x00 instead of 0x48.
+  Cause: Lab spec was written for LSM303DLHC but our board has LSM303AGR.
+  Diagnosis: Read register 0x4F - returned 0x40, confirming LSM303AGR.
+  Fix: Use AGR register map:
+       Config register: 0x60 (not 0x02)
+       Output registers: start at 0x68 (not 0x03)
+       Byte order: little-endian X,Y,Z (not big-endian X,Z,Y like DLHC)
+
+Problem 4 - I2C scanner confirmed device present
+  The scanner found 0x1E and 0x19 on the bus.
+  0x1E = magnetometer (what we need)
+  0x19 = accelerometer (same chip, different address)
+  This ruled out wiring problems and confirmed I2C1 was correctly configured.
+
+
+==============================================================
+PART 8: ADVANCED - ACCELEROMETER AND GYROSCOPE (Task 7.4.2c)
+==============================================================
+
+The Discovery board has two more sensors that could extend this module:
+
+LSM303AGR Accelerometer (I2C address 0x19 / HAL 0x32):
+  - Measures acceleration on X, Y, Z axes in units of g
+  - WHO_AM_I register 0x0F returns 0x33
+  - Output registers start at 0x28 (6 bytes, little-endian)
+  - Useful for: tilt correction of compass heading (tilt-compensated heading)
+    When the board is not flat, raw X/Y mag values are affected by tilt,
+    and the accelerometer can be used to calculate the true horizontal heading.
+
+L3GD20H Gyroscope (SPI interface, not I2C):
+  - Measures angular rotation rate in degrees per second
+  - Uses SPI1 (pins PA5/PA6/PA7 for clock/MISO/MOSI, PE3 for chip select)
+  - Combined with magnetometer and accelerometer, can estimate:
+      heading (which way you face)
+      pitch   (nose up / nose down)
+      roll    (tilted left / right)
+  - This combination is called an Attitude and Heading Reference System (AHRS)
+  - A Kalman filter or complementary filter would combine all three sensors
+    to reduce noise and drift in the angle estimates.
+
+For Exercise 4, only the magnetometer is required.
+The accelerometer and gyroscope are optional extensions for the advanced task.

@@ -1,12 +1,12 @@
 # MTRX2700 Project 2 — C Lab
 
 ## Group Members
-| Name | SID | Role |
-|---|---|---|
-| William Kirk | 550667928 | Exercise 1 — Digital I/O |
-| Josh Johnson | — | Exercise 2 — Timer / PWM |
-| Hajin Paek | — | Exercise 3 — Serial Interface |
-| Michael Deng | — | Exercise 4 — I2C Compass, Exercise 5 — Integration |
+| Name | Role |
+|---|---|
+| William Kirk | Exercise 1 — Digital I/O |
+| Josh Johnson | Exercise 2 — Timer / PWM |
+| Hajin Paek  | Exercise 3 — Serial Interface |
+| Michael Deng | Exercise 4 — I2C Compass, Exercise 5 — Integration |
 
 ## Project Overview
 

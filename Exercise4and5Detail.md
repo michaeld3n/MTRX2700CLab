@@ -59,7 +59,7 @@ Every I2C device has a fixed 7-bit address (set by the chip manufacturer, someti
 The STM32 HAL uses **8-bit addresses** (the 7-bit address shifted 1 bit left). So when a datasheet says the address is `0x1E`, you pass `0x1E << 1 = 0x3C` to HAL functions.
 
 | Device on Discovery board | 7-bit address | HAL 8-bit address |
-|---|---|---|
+|---|---|--
 | LSM303DLHC Magnetometer | `0x1E` | `0x3C` |
 | LSM303DLHC Accelerometer | `0x19` | `0x32` |
 
