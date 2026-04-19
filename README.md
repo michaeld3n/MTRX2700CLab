@@ -7,6 +7,7 @@
 | Josh Johnson | Exercise 2 — Timer / PWM |
 | Hajin Paek  | Exercise 3 — Serial Interface |
 | Michael Deng | Exercise 4 — I2C Compass, Exercise 5 — Integration |
+| Everyone | Exercise 5 - The Integration Task |
 
 ## Project Overview
 
